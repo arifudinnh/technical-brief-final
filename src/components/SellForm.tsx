@@ -1,16 +1,16 @@
 import { useState } from 'react'
-import { useAccount, useChainId, usePublicClient, useWalletClient, useReadContract } from 'wagmi'
+import { useAccount, usePublicClient, useWalletClient, useReadContract } from 'wagmi'
 import { decodeEventLog, formatEther, parseUnits } from 'viem'
 import type { TokenInfo } from '../hooks/useTokenList'
 import {
   applySlippage,
   calcSellQuoteOut,
   formatAmount,
-  formatEth,
+  formatQuote,
   isUserRejected,
   parseContractError,
 } from '../lib/utils'
-import { robinhoodTestnet } from '../lib/wagmi'
+import { useWalletNetwork } from '../hooks/useWalletNetwork'
 import bondingCurveAbi from '../abi/BondingCurve'
 import launcherTokenAbi from '../abi/LauncherToken'
 import TxStatusView, { type TxStatus } from './TxStatusView'
@@ -48,7 +48,7 @@ function sellDisableReason(
 
 export default function SellForm({ token, onSuccess }: SellFormProps) {
   const { address, isConnected } = useAccount()
-  const chainId = useChainId()
+  const { isWrongNetwork } = useWalletNetwork()
   const publicClient = usePublicClient()
   const { data: walletClient } = useWalletClient()
 
@@ -76,7 +76,6 @@ export default function SellForm({ token, onSuccess }: SellFormProps) {
   const [approvedHint, setApprovedHint] = useState(false)
   const [soldEth, setSoldEth] = useState<bigint | null>(null)
 
-  const isWrongNetwork = isConnected && chainId !== robinhoodTestnet.id
   const balance = tokenBalance as bigint | undefined
 
   // Parse jumlah token (maksimal 18 desimal).
@@ -107,8 +106,12 @@ export default function SellForm({ token, onSuccess }: SellFormProps) {
 
   const needsApproval = parsedAmount > 0n && (allowance === undefined || parsedAmount > (allowance as bigint))
   const disableReason = sellDisableReason(token, isConnected, isWrongNetwork, parsedAmount, balance, token.quoteReserve)
-  const isIdle = txStatus.type === 'idle'
-  const canAct = isIdle && disableReason === '' && !!walletClient && !!address && !!publicClient
+  /** Terkunci saat transaksi berjalan / menampilkan hasil sukses. */
+  const isLocked =
+    txStatus.type === 'signing' || txStatus.type === 'pending' || txStatus.type === 'success'
+  /** Form bisa dipakai saat idle atau setelah error. */
+  const isUsable = txStatus.type === 'idle' || txStatus.type === 'error'
+  const canAct = !isLocked && disableReason === '' && !!walletClient && !!address && !!publicClient
 
   const setPercent = (pct: number) => {
     if (!balance) return
@@ -124,7 +127,7 @@ export default function SellForm({ token, onSuccess }: SellFormProps) {
   }
 
   const handleApprove = async () => {
-    if (!canAct || !walletClient || !address) return
+    if (!canAct || !walletClient || !address || !publicClient) return
     setPendingAction('approve')
     setTxStatus({ type: 'signing' })
     try {
@@ -135,7 +138,11 @@ export default function SellForm({ token, onSuccess }: SellFormProps) {
         args: [token.curveAddress, parsedAmount],
       })
       setTxStatus({ type: 'pending', hash })
-      await publicClient!.waitForTransactionReceipt({ hash })
+      const receipt = await publicClient.waitForTransactionReceipt({ hash })
+      if (receipt.status === 'reverted') {
+        setTxStatus({ type: 'error', message: 'Approve gagal di jaringan (reverted). Silakan coba lagi.' })
+        return
+      }
       await refetchAllowance()
       setTxStatus({ type: 'idle' })
       setApprovedHint(true)
@@ -158,9 +165,19 @@ export default function SellForm({ token, onSuccess }: SellFormProps) {
       setTxStatus({ type: 'pending', hash })
       const receipt = await publicClient.waitForTransactionReceipt({ hash })
 
-      // Ambil jumlah ETH sesungguhnya dari event CurveSell.
+      // Transaksi masuk blok tapi di-revert → tampilkan sebagai gagal.
+      if (receipt.status === 'reverted') {
+        setTxStatus({
+          type: 'error',
+          message: 'Penjualan gagal di jaringan (reverted). Harga mungkin sudah berubah — silakan coba lagi.',
+        })
+        return
+      }
+
+      // Ambil jumlah quote sesungguhnya dari event CurveSell di curve ini.
       let quoteOut = estimatedQuote
       for (const log of receipt.logs) {
+        if (log.address.toLowerCase() !== token.curveAddress.toLowerCase()) continue
         try {
           const decoded = decodeEventLog({
             abi: bondingCurveAbi,
@@ -169,7 +186,7 @@ export default function SellForm({ token, onSuccess }: SellFormProps) {
           })
           if (decoded.eventName === 'CurveSell') quoteOut = decoded.args.quoteOut
         } catch {
-          // log dari kontrak lain — abaikan
+          // event lain dari kontrak yang sama — abaikan
         }
       }
 
@@ -211,7 +228,7 @@ export default function SellForm({ token, onSuccess }: SellFormProps) {
             }}
             min="0"
             step="any"
-            disabled={!isIdle}
+            disabled={isLocked}
           />
           <span className="input-suffix">{token.symbol}</span>
         </div>
@@ -221,7 +238,7 @@ export default function SellForm({ token, onSuccess }: SellFormProps) {
               key={pct}
               className="slippage-btn"
               onClick={() => setPercent(pct)}
-              disabled={!isIdle || !balance}
+              disabled={isLocked || !balance}
             >
               {pct === 100 ? 'MAX' : `${pct}%`}
             </button>
@@ -231,12 +248,13 @@ export default function SellForm({ token, onSuccess }: SellFormProps) {
       </div>
 
       <div className="estimated-out">
-        <span className="label">Perkiraan ETH diterima</span>
+        <span className="label">Perkiraan {token.pairSymbol} diterima</span>
         <span className="value">
-          {estimatedQuote > 0n ? formatEth(estimatedQuote, 6) : '0'} ETH
+          {estimatedQuote > 0n ? formatQuote(estimatedQuote, token.pairDecimals, 6) : '0'} {token.pairSymbol}
         </span>
         <span className="estimated-out__sub">
-          min. {minQuoteOut > 0n ? formatEth(minQuoteOut, 6) : '0'} ETH (slippage {slippageBps / 100}%)
+          min. {minQuoteOut > 0n ? formatQuote(minQuoteOut, token.pairDecimals, 6) : '0'} {token.pairSymbol}{' '}
+          (slippage {slippageBps / 100}%)
         </span>
       </div>
 
@@ -251,7 +269,7 @@ export default function SellForm({ token, onSuccess }: SellFormProps) {
                 setSlippageBps(opt * 100)
                 setCustomSlippage('')
               }}
-              disabled={!isIdle}
+              disabled={isLocked}
             >
               {opt}%
             </button>
@@ -270,14 +288,14 @@ export default function SellForm({ token, onSuccess }: SellFormProps) {
               min="0.1"
               max="50"
               step="0.1"
-              disabled={!isIdle}
+              disabled={isLocked}
             />
             <span className="input-suffix">%</span>
           </div>
         </div>
       </div>
 
-      {approvedHint && isIdle && needsApproval === false && (
+      {approvedHint && txStatus.type === 'idle' && !needsApproval && (
         <div className="tx-status tx-status--success" role="status">
           <span className="icon">✅</span>
           <div className="tx-status__body">Approve berhasil — klik tombol di bawah untuk menjual.</div>
@@ -295,15 +313,16 @@ export default function SellForm({ token, onSuccess }: SellFormProps) {
         successDetail={
           txStatus.type === 'success' && soldEth !== null ? (
             <div>
-              Kamu menerima <strong>{formatEth(soldEth, 6)}</strong> ETH
+              Kamu menerima{' '}
+              <strong>{formatQuote(soldEth, token.pairDecimals, 6)}</strong> {token.pairSymbol}
             </div>
           ) : null
         }
-        onReset={isIdle ? undefined : resetForm}
+        onReset={txStatus.type === 'success' ? resetForm : undefined}
         resetLabel="Jual Lagi"
       />
 
-      {(txStatus.type === 'idle' || txStatus.type === 'signing') && (
+      {(isUsable || txStatus.type === 'signing') && (
         <button
           id="btn-sell"
           className={`btn btn-buy ${needsApproval ? 'btn-approve' : 'btn-primary'}`}
@@ -323,8 +342,8 @@ export default function SellForm({ token, onSuccess }: SellFormProps) {
         </button>
       )}
 
-      {disableReason && txStatus.type === 'idle' && <p className="disable-hint">{disableReason}</p>}
-      {needsApproval && !disableReason && txStatus.type === 'idle' && (
+      {disableReason && isUsable && <p className="disable-hint">{disableReason}</p>}
+      {needsApproval && !disableReason && isUsable && (
         <p className="disable-hint">
           Contract butuh approve {token.symbol} sebelum dijual (sekali saja per jumlah).
         </p>

@@ -1,6 +1,6 @@
 import type { TokenInfo } from '../hooks/useTokenList'
 import { useTxHistory } from '../hooks/useTxHistory'
-import { formatAmount, formatEth, timeAgo } from '../lib/utils'
+import { formatAmount, formatQuote, timeAgo } from '../lib/utils'
 import { EXPLORER_URL } from '../lib/wagmi'
 
 interface TxHistoryProps {
@@ -76,7 +76,8 @@ export default function TxHistory({ token, refreshToken = 0 }: TxHistoryProps) {
                 {token.symbol}
                 <span className="tx-history__quote">
                   {isBuy ? '−' : '+'}
-                  {formatEth(isBuy ? (tx.quoteIn ?? 0n) : (tx.quoteOut ?? 0n), 6)} ETH
+                  {formatQuote(isBuy ? (tx.quoteIn ?? 0n) : (tx.quoteOut ?? 0n), token.pairDecimals, 6)}{' '}
+                  {token.pairSymbol}
                 </span>
               </div>
 

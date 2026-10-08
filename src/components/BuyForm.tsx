@@ -1,9 +1,9 @@
 import { useState } from 'react'
-import { useAccount, useBalance, useChainId, usePublicClient, useWalletClient, useReadContract } from 'wagmi'
+import { useAccount, useBalance, usePublicClient, useWalletClient, useReadContract } from 'wagmi'
 import { parseEther, formatEther, decodeEventLog } from 'viem'
 import type { TokenInfo } from '../hooks/useTokenList'
 import { calcTokensOut, applySlippage, formatAmount, formatEth, isUserRejected, parseContractError } from '../lib/utils'
-import { robinhoodTestnet } from '../lib/wagmi'
+import { useWalletNetwork } from '../hooks/useWalletNetwork'
 import bondingCurveAbi from '../abi/BondingCurve'
 import launcherTokenAbi from '../abi/LauncherToken'
 import TxStatusView, { type TxStatus } from './TxStatusView'
@@ -19,7 +19,7 @@ const GAS_BUFFER_WEI = 500_000_000_000_000n // 0.0005 ETH
 
 export default function BuyForm({ token, onSuccess }: BuyFormProps) {
   const { address, isConnected } = useAccount()
-  const chainId = useChainId()
+  const { isWrongNetwork } = useWalletNetwork()
   const publicClient = usePublicClient()
   const { data: walletClient } = useWalletClient()
 
@@ -42,7 +42,6 @@ export default function BuyForm({ token, onSuccess }: BuyFormProps) {
   const [txStatus, setTxStatus] = useState<TxStatus>({ type: 'idle' })
   const [boughtTokens, setBoughtTokens] = useState<bigint | null>(null)
 
-  const isWrongNetwork = isConnected && chainId !== robinhoodTestnet.id
   const isPhase0 = token.phase === 0
   const isEthPaired = token.isEthPaired
 
@@ -74,7 +73,11 @@ export default function BuyForm({ token, onSuccess }: BuyFormProps) {
   const minTokensOut = estimatedOut > 0n ? applySlippage(estimatedOut, slippageBps) : 0n
 
   const hasSufficientBalance = parsedEth > 0n && ethBalance ? parsedEth <= ethBalance.value : false
-  const isIdle = txStatus.type === 'idle'
+  /** Terkunci saat transaksi berjalan / menampilkan hasil sukses. */
+  const isLocked =
+    txStatus.type === 'signing' || txStatus.type === 'pending' || txStatus.type === 'success'
+  /** Form bisa dipakai saat idle atau setelah error (pesan error tampil singkat). */
+  const isUsable = txStatus.type === 'idle' || txStatus.type === 'error'
   const noLiquidity = token.tokenReserve === 0n || token.quoteReserve === 0n
 
   const canBuy =
@@ -118,9 +121,20 @@ export default function BuyForm({ token, onSuccess }: BuyFormProps) {
       setTxStatus({ type: 'pending', hash })
       const receipt = await publicClient.waitForTransactionReceipt({ hash })
 
-      // Ambil jumlah token sesungguhnya dari event CurveBuy.
+      // Transaksi sudah masuk blok tapi di-revert → tampilkan sebagai gagal.
+      if (receipt.status === 'reverted') {
+        setTxStatus({
+          type: 'error',
+          message:
+            'Transaksi gagal di jaringan (reverted). Harga mungkin sudah berubah — silakan coba lagi.',
+        })
+        return
+      }
+
+      // Ambil jumlah token sesungguhnya dari event CurveBuy di kontrak curve ini.
       let tokensOut = estimatedOut
       for (const log of receipt.logs) {
+        if (log.address.toLowerCase() !== token.curveAddress.toLowerCase()) continue
         try {
           const decoded = decodeEventLog({
             abi: bondingCurveAbi,
@@ -129,7 +143,7 @@ export default function BuyForm({ token, onSuccess }: BuyFormProps) {
           })
           if (decoded.eventName === 'CurveBuy') tokensOut = decoded.args.tokensOut
         } catch {
-          // log dari kontrak lain — abaikan
+          // event lain dari kontrak yang sama — abaikan
         }
       }
 
@@ -177,14 +191,14 @@ export default function BuyForm({ token, onSuccess }: BuyFormProps) {
             onChange={e => setEthInput(e.target.value)}
             min="0"
             step="0.001"
-            disabled={!isIdle}
+            disabled={isLocked}
           />
           <span className="input-suffix">ETH</span>
         </div>
         {address && ethBalance && (
           <div className="balance-hint">
             <span>Saldo: {formatEth(ethBalance.value)} ETH</span>
-            <button className="btn-max" onClick={handleMax} disabled={!isIdle}>
+            <button className="btn-max" onClick={handleMax} disabled={isLocked}>
               MAX
             </button>
           </div>
@@ -211,7 +225,7 @@ export default function BuyForm({ token, onSuccess }: BuyFormProps) {
                 setSlippageBps(opt * 100)
                 setCustomSlippage('')
               }}
-              disabled={!isIdle}
+              disabled={isLocked}
             >
               {opt}%
             </button>
@@ -231,7 +245,7 @@ export default function BuyForm({ token, onSuccess }: BuyFormProps) {
               min="0.1"
               max="50"
               step="0.1"
-              disabled={!isIdle}
+              disabled={isLocked}
             />
             <span className="input-suffix">%</span>
           </div>
@@ -252,16 +266,16 @@ export default function BuyForm({ token, onSuccess }: BuyFormProps) {
             </div>
           ) : null
         }
-        onReset={isIdle ? undefined : resetForm}
+        onReset={txStatus.type === 'success' ? resetForm : undefined}
         resetLabel="Beli Lagi"
       />
 
-      {(txStatus.type === 'idle' || txStatus.type === 'signing') && (
+      {(isUsable || txStatus.type === 'signing') && (
         <button
           id="btn-buy"
           className="btn btn-primary btn-buy"
           onClick={handleBuy}
-          disabled={!canBuy || txStatus.type !== 'idle'}
+          disabled={!canBuy || isLocked}
           title={disableReason}
         >
           {txStatus.type === 'signing' ? (
@@ -274,7 +288,7 @@ export default function BuyForm({ token, onSuccess }: BuyFormProps) {
         </button>
       )}
 
-      {disableReason && txStatus.type === 'idle' && <p className="disable-hint">{disableReason}</p>}
+      {disableReason && isUsable && <p className="disable-hint">{disableReason}</p>}
     </div>
   )
 }

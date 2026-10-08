@@ -1,8 +1,9 @@
 import { formatUnits } from 'viem'
 
 /**
- * Format harga yang sangat kecil (notasi subscript: 0.0₅1234).
- * Tidak pernah menampilkan 0.00.
+ * Format harga yang sangat kecil dengan notasi subscript: `0.₅1234` = 0,000001234.
+ * Angka subscript = jumlah nol setelah tanda titik sehingga tidak menyesatkan.
+ * Tidak pernah menampilkan `0.00`.
  */
 export function formatSmallPrice(wei: bigint, tokenDecimals = 18): string {
   if (wei === 0n) return '0'
@@ -24,7 +25,7 @@ export function formatSmallPrice(wei: bigint, tokenDecimals = 18): string {
         '5': '₅', '6': '₆', '7': '₇', '8': '₈', '9': '₉',
       }
       const sub = zeros.toString().split('').map(d => subscriptDigits[d]).join('')
-      return `0.0${sub}${sig}`
+      return `0.${sub}${sig}`
     }
   }
   return ethValue.toPrecision(4)
@@ -40,10 +41,20 @@ export function formatAmount(value: bigint, decimals = 18, maxFractionDigits = 4
 }
 
 /**
+ * Format nilai quote (bigint, satuan terkecil) dengan desimal token quote apa pun.
+ * Dipakai untuk ETH (18 desimal) maupun token pair non-ETH.
+ */
+export function formatQuote(value: bigint, decimals: number, fractionDigits = 4): string {
+  const num = Number(formatUnits(value, decimals))
+  if (num === 0) return (0).toFixed(fractionDigits)
+  return num.toFixed(fractionDigits)
+}
+
+/**
  * Format ETH (bigint wei) dengan jumlah desimal tetap.
  */
 export function formatEth(wei: bigint, fractionDigits = 4): string {
-  return parseFloat(formatUnits(wei, 18)).toFixed(fractionDigits)
+  return formatQuote(wei, 18, fractionDigits)
 }
 
 /**
@@ -153,7 +164,12 @@ export function parseContractError(error: unknown): string {
   const msg = String((error as { message?: string })?.message ?? error)
   if (isUserRejected(error)) return 'Transaksi ditolak di wallet.'
   if (msg.includes('SlippageExceeded')) return 'Harga bergerak terlalu jauh, slippage melebihi toleransi. Coba lagi atau naikkan slippage.'
+  if (msg.includes('MinimumOutputRequired')) return 'Hasil minimum tidak tercapai karena harga berubah. Coba lagi.'
   if (msg.includes('CurveGraduated')) return 'Token ini sudah graduate dari bonding curve dan tidak bisa dibeli di sini lagi.'
+  if (msg.includes('InsufficientLiquidity')) return 'Likuiditas bonding curve tidak cukup untuk transaksi ini.'
+  if (msg.includes('InsufficientInputAmount') || msg.includes('ZeroAmount')) return 'Jumlah transaksi terlalu kecil (0). Masukkan jumlah yang lebih besar.'
+  if (msg.includes('InsufficientOutputAmount')) return 'Jumlah hasil terlalu kecil, kemungkinan karena likuiditas tipis. Coba lagi.'
+  if (msg.includes('NativeValueMismatch')) return 'Nilai ETH yang dikirim tidak sesuai dengan permintaan kontrak. Muat ulang form dan coba lagi.'
   if (msg.includes('insufficient funds') || msg.includes('InsufficientFunds')) return 'Saldo ETH tidak cukup untuk transaksi ini.'
   if (msg.includes('ExceededMaxFeePerGas') || msg.includes('fee cap') || msg.includes('gas')) return 'Estimasi gas gagal. Transaksi mungkin akan gagal.'
   return 'Transaksi gagal. Silakan coba lagi.'

@@ -1,8 +1,10 @@
 import { useState } from 'react'
-import { useAccount, useChainId, usePublicClient, useWalletClient, useReadContract } from 'wagmi'
-import { decodeEventLog } from 'viem'
-import { LAUNCH_FACTORY_ADDRESS, robinhoodTestnet } from '../lib/wagmi'
+import { createPortal } from 'react-dom'
+import { useAccount, usePublicClient, useWalletClient, useReadContract } from 'wagmi'
+import { decodeEventLog, formatEther } from 'viem'
+import { LAUNCH_FACTORY_ADDRESS } from '../lib/wagmi'
 import { isUserRejected, parseContractError } from '../lib/utils'
+import { useWalletNetwork } from '../hooks/useWalletNetwork'
 import launchFactoryAbi from '../abi/LaunchFactory'
 import TxStatusView, { type TxStatus } from './TxStatusView'
 
@@ -20,7 +22,7 @@ function randomBytes32(): `0x${string}` {
 
 export default function LaunchToken({ onLaunched }: LaunchTokenProps) {
   const { address, isConnected } = useAccount()
-  const chainId = useChainId()
+  const { isWrongNetwork } = useWalletNetwork()
   const publicClient = usePublicClient()
   const { data: walletClient } = useWalletClient()
   const [isOpen, setIsOpen] = useState(false)
@@ -28,8 +30,6 @@ export default function LaunchToken({ onLaunched }: LaunchTokenProps) {
   const [form, setForm] = useState({ name: '', symbol: 'TEST', description: '', logo: '' })
   const [txStatus, setTxStatus] = useState<TxStatus>({ type: 'idle' })
   const [launched, setLaunched] = useState<{ token: `0x${string}`; curve: `0x${string}` } | null>(null)
-
-  const isWrongNetwork = isConnected && chainId !== robinhoodTestnet.id
 
   const { data: launchFee } = useReadContract({
     address: LAUNCH_FACTORY_ADDRESS,
@@ -45,20 +45,30 @@ export default function LaunchToken({ onLaunched }: LaunchTokenProps) {
     query: { enabled: !!address },
   })
 
+  // Nilai yang benar-benar dikirim ke kontrak (sudah trim + uppercase).
+  const nameValue = form.name.trim()
+  const symbolValue = form.symbol.trim().toUpperCase()
+
   const logoInvalid = form.logo.trim() !== '' && !/^https?:\/\//i.test(form.logo.trim())
-  const isIdle = txStatus.type === 'idle'
+  const nameInvalid = nameValue.length > 64
+  const symbolInvalid = symbolValue.length > 16
+
+  /** Terkunci saat transaksi berjalan / menampilkan hasil sukses. */
+  const isLocked =
+    txStatus.type === 'signing' || txStatus.type === 'pending' || txStatus.type === 'success'
   const canSubmit =
     isConnected &&
     !isWrongNetwork &&
     launchFee !== undefined &&
-    form.name.trim() !== '' &&
-    form.symbol.trim() !== '' &&
+    nameValue !== '' &&
+    symbolValue !== '' &&
+    !nameInvalid &&
+    !symbolInvalid &&
     !logoInvalid &&
-    isIdle &&
     canLaunch !== false
 
   const handleLaunch = async () => {
-    if (!canSubmit || !walletClient || !address || !publicClient || launchFee === undefined) return
+    if (!canSubmit || isLocked || !walletClient || !address || !publicClient || launchFee === undefined) return
 
     setTxStatus({ type: 'signing' })
     try {
@@ -76,8 +86,8 @@ export default function LaunchToken({ onLaunched }: LaunchTokenProps) {
         functionName: 'launchToken',
         args: [
           {
-            name: form.name.trim(),
-            symbol: form.symbol.trim().toUpperCase(),
+            name: nameValue,
+            symbol: symbolValue,
             logo: form.logo.trim(),
             description: form.description.trim(),
             socials: { twitter: '', telegram: '', discord: '', website: '', farcaster: '' },
@@ -96,10 +106,19 @@ export default function LaunchToken({ onLaunched }: LaunchTokenProps) {
       setTxStatus({ type: 'pending', hash })
       const receipt = await publicClient.waitForTransactionReceipt({ hash })
 
-      // Ambil alamat token & curve dari event TokenLaunched.
+      if (receipt.status === 'reverted') {
+        setTxStatus({
+          type: 'error',
+          message: 'Transaksi launch gagal di jaringan (reverted). Silakan coba lagi.',
+        })
+        return
+      }
+
+      // Ambil alamat token & curve dari event TokenLaunched di LaunchFactory.
       let tokenAddr: `0x${string}` | null = null
       let curveAddr: `0x${string}` | null = null
       for (const log of receipt.logs) {
+        if (log.address.toLowerCase() !== LAUNCH_FACTORY_ADDRESS.toLowerCase()) continue
         try {
           const decoded = decodeEventLog({
             abi: launchFactoryAbi,
@@ -111,7 +130,7 @@ export default function LaunchToken({ onLaunched }: LaunchTokenProps) {
             curveAddr = decoded.args.curve
           }
         } catch {
-          // log dari kontrak lain — abaikan
+          // event lain dari factory — abaikan
         }
       }
 
@@ -138,17 +157,20 @@ export default function LaunchToken({ onLaunched }: LaunchTokenProps) {
         onClick={() => setIsOpen(true)}
         title="Launch Token Baru (Bonus)"
       >
-        🚀 Launch Token
+        🚀 <span className="label-lg">Launch Token</span>
+        <span className="label-sm">Launch</span>
       </button>
     )
   }
 
-  return (
-    <div className="launch-modal-overlay" onClick={() => isIdle && resetModal()}>
+  // Portal ke body: header punya backdrop-filter sehingga menjadi containing
+  // block untuk elemen fixed — tanpa portal, overlay terkunci setinggi header.
+  return createPortal(
+    <div className="launch-modal-overlay" onClick={() => !isLocked && resetModal()}>
       <div className="launch-modal" onClick={e => e.stopPropagation()}>
         <div className="launch-modal__header">
           <h2>🚀 Launch Token Baru</h2>
-          <button className="btn-close" onClick={resetModal} aria-label="Tutup" disabled={!isIdle}>
+          <button className="btn-close" onClick={resetModal} aria-label="Tutup" disabled={isLocked}>
             ✕
           </button>
         </div>
@@ -158,6 +180,15 @@ export default function LaunchToken({ onLaunched }: LaunchTokenProps) {
             <span className="icon">⚠️</span>
             <div className="tx-status__body">
               Alamat wallet kamu belum diizinkan untuk launch token. Hubungi pengawas.
+            </div>
+          </div>
+        )}
+
+        {isWrongNetwork && (
+          <div className="tx-status tx-status--warning" role="alert">
+            <span className="icon">⚠️</span>
+            <div className="tx-status__body">
+              Network salah — pindah ke Robinhood Testnet dulu sebelum launch.
             </div>
           </div>
         )}
@@ -174,8 +205,9 @@ export default function LaunchToken({ onLaunched }: LaunchTokenProps) {
             value={form.name}
             maxLength={64}
             onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
-            disabled={!isIdle}
+            disabled={isLocked}
           />
+          {nameInvalid && <span className="field-error">Nama maksimal 64 karakter.</span>}
         </div>
 
         <div className="form-group">
@@ -190,8 +222,11 @@ export default function LaunchToken({ onLaunched }: LaunchTokenProps) {
             value={form.symbol}
             maxLength={16}
             onChange={e => setForm(f => ({ ...f, symbol: e.target.value.toUpperCase() }))}
-            disabled={!isIdle}
+            disabled={isLocked}
           />
+          {symbolInvalid && (
+            <span className="field-error">Simbol maksimal 16 karakter setelah diuppercase.</span>
+          )}
         </div>
 
         <div className="form-group">
@@ -206,7 +241,7 @@ export default function LaunchToken({ onLaunched }: LaunchTokenProps) {
             value={form.description}
             maxLength={200}
             onChange={e => setForm(f => ({ ...f, description: e.target.value }))}
-            disabled={!isIdle}
+            disabled={isLocked}
           />
         </div>
 
@@ -221,7 +256,7 @@ export default function LaunchToken({ onLaunched }: LaunchTokenProps) {
             placeholder="https://…/logo.png"
             value={form.logo}
             onChange={e => setForm(f => ({ ...f, logo: e.target.value }))}
-            disabled={!isIdle}
+            disabled={isLocked}
           />
           {logoInvalid && <span className="field-error">URL harus diawali http:// atau https://</span>}
         </div>
@@ -229,7 +264,7 @@ export default function LaunchToken({ onLaunched }: LaunchTokenProps) {
         {launchFee !== undefined && (
           <div className="estimated-out">
             <span className="label">Biaya Launch</span>
-            <span className="value">{(Number(launchFee) / 1e18).toFixed(6)} ETH</span>
+            <span className="value">{formatEther(launchFee)} ETH</span>
           </div>
         )}
 
@@ -251,16 +286,16 @@ export default function LaunchToken({ onLaunched }: LaunchTokenProps) {
               </div>
             ) : null
           }
-          onReset={resetModal}
+          onReset={txStatus.type === 'success' ? resetModal : undefined}
           resetLabel="Selesai"
         />
 
-        {(txStatus.type === 'idle' || txStatus.type === 'signing') && (
+        {(txStatus.type === 'idle' || txStatus.type === 'signing' || txStatus.type === 'error') && (
           <button
             id="btn-launch-token"
             className="btn btn-primary btn-buy"
             onClick={handleLaunch}
-            disabled={!canSubmit}
+            disabled={!canSubmit || isLocked}
           >
             {txStatus.type === 'signing' ? (
               <>
@@ -272,6 +307,7 @@ export default function LaunchToken({ onLaunched }: LaunchTokenProps) {
           </button>
         )}
       </div>
-    </div>
+    </div>,
+    document.body
   )
 }

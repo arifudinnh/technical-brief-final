@@ -1,10 +1,13 @@
 import { useState } from 'react'
+import { useReadContract } from 'wagmi'
+import { formatEther } from 'viem'
 import { useTokenList, type TokenInfo } from './hooks/useTokenList'
 import AppHeader from './components/AppHeader'
 import TokenCard from './components/TokenCard'
 import TradePanel from './components/TradePanel'
 import TokenDetail from './components/TokenDetail'
-import { EXPLORER_URL } from './lib/wagmi'
+import { EXPLORER_URL, LAUNCH_FACTORY_ADDRESS } from './lib/wagmi'
+import launchFactoryAbi from './abi/LaunchFactory'
 import heroIllustration from './assets/hero.png'
 
 const PHASE_FILTERS: { value: number | 'all'; label: string }[] = [
@@ -16,11 +19,19 @@ const PHASE_FILTERS: { value: number | 'all'; label: string }[] = [
 ]
 
 export default function App() {
-  const { tokens, loading, error, reload, refreshToken } = useTokenList()
+  const { tokens, loading, refreshing, error, reload, refreshToken } = useTokenList()
   const [selectedAddress, setSelectedAddress] = useState<`0x${string}` | null>(null)
   const [detailAddress, setDetailAddress] = useState<`0x${string}` | null>(null)
   const [filterPhase, setFilterPhase] = useState<number | 'all'>('all')
   const [searchQuery, setSearchQuery] = useState('')
+
+  // launchFee juga ditampilkan di sini supaya tetap terlihat di layar HP
+  // (badge di header disembunyikan pada breakpoint kecil).
+  const { data: launchFee } = useReadContract({
+    address: LAUNCH_FACTORY_ADDRESS,
+    abi: launchFactoryAbi,
+    functionName: 'launchFee',
+  })
 
   // Turunkan alamat → objek token terbaru (otomatis ikut update setelah refresh).
   const selectedToken = selectedAddress ? (tokens.find(t => t.address === selectedAddress) ?? null) : null
@@ -89,10 +100,10 @@ export default function App() {
                     id="btn-refresh"
                     className="btn btn-outline btn-sm"
                     onClick={reload}
-                    disabled={loading}
+                    disabled={refreshing}
                     title="Refresh daftar token"
                   >
-                    {loading ? <span className="spinner" /> : '↻'} Refresh
+                    {refreshing ? <span className="spinner" /> : '↻'} Refresh
                   </button>
                 </div>
               </div>
@@ -209,6 +220,9 @@ export default function App() {
         <div className="footer__inner">
           <span>LaunchPad — uji coba bonding curve di Robinhood Chain Testnet</span>
           <div className="footer__links">
+            {launchFee !== undefined && (
+              <span className="footer__fee">Launch Fee {formatEther(launchFee)} ETH</span>
+            )}
             <span>Chain ID 46630</span>
             <a href={EXPLORER_URL} target="_blank" rel="noopener noreferrer">
               Explorer ↗

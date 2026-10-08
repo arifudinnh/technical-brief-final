@@ -20,10 +20,10 @@ export interface CurveTx {
 }
 
 const CURVE_BUY_EVENT = parseAbiItem(
-  'event CurveBuy(address indexed buyer, address indexed recipient, uint256 quoteIn, uint256 tokensOut, uint256 fee, uint256 creatorTax)'
+  'event CurveBuy(address indexed buyer, address indexed recipient, uint256 quoteIn, uint256 tokensOut, uint256 fee, uint256 tax)'
 )
 const CURVE_SELL_EVENT = parseAbiItem(
-  'event CurveSell(address indexed seller, address indexed recipient, uint256 tokensIn, uint256 quoteOut)'
+  'event CurveSell(address indexed seller, address indexed recipient, uint256 tokensIn, uint256 quoteOut, uint256 fee, uint256 tax)'
 )
 
 const MAX_EVENTS = 30
@@ -47,12 +47,21 @@ export function useTxHistory(token: TokenInfo, refreshToken = 0) {
   const [events, setEvents] = useState<CurveTx[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const inFlightRef = useRef<Promise<void> | null>(null)
+  const inFlightRef = useRef<{ key: string; promise: Promise<void> } | null>(null)
+  const runIdRef = useRef(0)
 
   const getClient = useCallback(() => wagmiClient ?? getBatchedClient(), [wagmiClient])
 
-  const load = useCallback(async (): Promise<void> => {
-    if (inFlightRef.current) return inFlightRef.current
+  const load = useCallback(async (options?: { fresh?: boolean }): Promise<void> => {
+    const key = `${token.curveAddress}:${token.launchBlock}`
+    // Dedup hanya untuk token & scan yang sama (efek dobel StrictMode);
+    // runId memastikan scan lama tidak menimpa hasil scan terbaru.
+    if (!options?.fresh && inFlightRef.current?.key === key) {
+      return inFlightRef.current.promise
+    }
+
+    const runId = ++runIdRef.current
+    const isCurrent = () => runIdRef.current === runId
 
     const run = (async () => {
       setLoading(true)
@@ -137,26 +146,33 @@ export function useTxHistory(token: TokenInfo, refreshToken = 0) {
         })
         const tsMap = new Map(timestamps)
 
-        setEvents(recent.map(tx => ({ ...tx, timestamp: tsMap.get(tx.blockNumber.toString()) ?? null })))
+        if (isCurrent()) {
+          setEvents(recent.map(tx => ({ ...tx, timestamp: tsMap.get(tx.blockNumber.toString()) ?? null })))
+        }
       } catch (e) {
         console.error('Failed to load tx history:', e)
-        setError('Gagal memuat riwayat transaksi. Periksa koneksi jaringan Anda.')
-        setEvents([])
+        if (isCurrent()) {
+          setError('Gagal memuat riwayat transaksi. Periksa koneksi jaringan Anda.')
+          setEvents([])
+        }
       } finally {
-        setLoading(false)
+        if (isCurrent()) setLoading(false)
       }
     })()
 
-    inFlightRef.current = run
+    inFlightRef.current = { key, promise: run }
     void run.finally(() => {
-      if (inFlightRef.current === run) inFlightRef.current = null
+      if (inFlightRef.current?.promise === run) inFlightRef.current = null
     })
     return run
   }, [getClient, token.curveAddress, token.launchBlock])
 
   useEffect(() => {
-    void load()
+    // refreshToken > 0 = transaksi baru dikonfirmasi → paksa snapshot blok terkini.
+    void load({ fresh: refreshToken > 0 })
   }, [load, refreshToken])
 
-  return { events, loading, error, reload: load }
+  const reload = useCallback(() => load({ fresh: true }), [load])
+
+  return { events, loading, error, reload }
 }

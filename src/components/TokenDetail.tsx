@@ -4,7 +4,7 @@ import {
   calcProgressBps,
   formatBps,
   formatAmount,
-  formatEth,
+  formatQuote,
   formatSmallPrice,
   phaseLabel,
   shortAddress,
@@ -68,9 +68,10 @@ function StatCard({ label, value, sub }: { label: string; value: string; sub?: s
 export default function TokenDetail({ token, onBack, onTxSuccess }: TokenDetailProps) {
   const { label, color } = phaseLabel(token.phase)
 
-  const priceWei =
+  const priceQuote =
     token.tokenReserve > 0n ? (token.quoteReserve * 10n ** 18n) / token.tokenReserve : 0n
-  const priceDisplay = priceWei > 0n ? `${formatSmallPrice(priceWei)} ETH` : '–'
+  const priceDisplay =
+    priceQuote > 0n ? `${formatSmallPrice(priceQuote, token.pairDecimals)} ${token.pairSymbol}` : '–'
 
   const progressBps = calcProgressBps(token.realQuoteReserve, token.graduationThreshold)
   const progressPct = (progressBps / 100).toFixed(1)
@@ -115,8 +116,16 @@ export default function TokenDetail({ token, onBack, onTxSuccess }: TokenDetailP
           {/* Statistik */}
           <div className="stats-grid">
             <StatCard label="Harga" value={priceDisplay} />
-            <StatCard label="Progress" value={`${progressPct}%`} sub={`${formatEth(token.realQuoteReserve)} / ${formatEth(token.graduationThreshold)} ETH`} />
-            <StatCard label="Likuiditas (ETH)" value={formatEth(token.quoteReserve)} sub="quote reserve" />
+            <StatCard
+              label="Progress"
+              value={`${progressPct}%`}
+              sub={`${formatQuote(token.realQuoteReserve, token.pairDecimals)} / ${formatQuote(token.graduationThreshold, token.pairDecimals)} ${token.pairSymbol}`}
+            />
+            <StatCard
+              label={`Likuiditas (${token.pairSymbol})`}
+              value={formatQuote(token.quoteReserve, token.pairDecimals)}
+              sub="quote reserve"
+            />
             <StatCard label="Sisa Token" value={formatAmount(token.tokenReserve)} sub="token reserve" />
             <StatCard label="Fee Trading" value={formatBps(token.feeBps)} />
             <StatCard label="Creator Tax" value={formatBps(token.creatorTaxBps)} />
@@ -135,8 +144,12 @@ export default function TokenDetail({ token, onBack, onTxSuccess }: TokenDetailP
               />
             </div>
             <div className="progress-detail">
-              <span>{formatEth(token.realQuoteReserve)} ETH terkumpul</span>
-              <span>target {formatEth(token.graduationThreshold)} ETH</span>
+              <span>
+                {formatQuote(token.realQuoteReserve, token.pairDecimals)} {token.pairSymbol} terkumpul
+              </span>
+              <span>
+                target {formatQuote(token.graduationThreshold, token.pairDecimals)} {token.pairSymbol}
+              </span>
             </div>
           </div>
 
@@ -159,7 +172,9 @@ export default function TokenDetail({ token, onBack, onTxSuccess }: TokenDetailP
               </div>
               <div className="info-row">
                 <span className="info-row__label">Pair Token</span>
-                <span className="info-row__value">{token.isEthPaired ? 'ETH' : shortAddress(token.pairToken)}</span>
+                <span className="info-row__value">
+                  {token.isEthPaired ? 'ETH' : `${token.pairSymbol} (${shortAddress(token.pairToken)})`}
+                </span>
               </div>
             </div>
           </div>

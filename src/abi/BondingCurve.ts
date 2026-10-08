@@ -190,7 +190,7 @@ const abi = [
         "internalType": "uint256"
       },
       {
-        "name": "creatorTax",
+        "name": "tax",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -225,6 +225,18 @@ const abi = [
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
+      },
+      {
+        "name": "fee",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "tax",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
       }
     ],
     "anonymous": false
@@ -232,11 +244,68 @@ const abi = [
   {
     "type": "error",
     "name": "SlippageExceeded",
-    "inputs": []
+    "inputs": [
+      {
+        "name": "actual",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "minimum",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
   },
   {
     "type": "error",
     "name": "CurveGraduated",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NativeValueMismatch",
+    "inputs": [
+      {
+        "name": "supplied",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "expected",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "InsufficientInputAmount",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InsufficientOutputAmount",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InsufficientLiquidity",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "MinimumOutputRequired",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ZeroAmount",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ZeroAddress",
     "inputs": []
   }
 ] as const

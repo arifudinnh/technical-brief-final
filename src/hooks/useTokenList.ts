@@ -38,7 +38,13 @@ export interface TokenInfo {
   creatorTaxBps: bigint
   phase: number
   isEthPaired: boolean
+  /** Simbol token quote (pair) — "ETH" untuk pair ETH, hasil `symbol()` untuk aset lain. */
+  pairSymbol: string
+  /** Desimal token quote (pair) — 18 untuk ETH, hasil `decimals()` untuk aset lain. */
+  pairDecimals: number
 }
+
+const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000'
 
 const TOKEN_LAUNCHED_EVENT = parseAbiItem(
   'event TokenLaunched(address indexed token, address indexed curve, address indexed deployer, address pairToken, uint256 launchConfigId, uint256 graduationThreshold)'
@@ -58,6 +64,9 @@ const CALL = {
   LAUNCHED: 9,
 } as const
 const CALLS_PER_TOKEN = Object.keys(CALL).length
+/** Index call tambahan (hanya untuk token non-ETH): pair symbol, pair decimals. */
+const PAIR_SYMBOL = CALLS_PER_TOKEN
+const PAIR_DECIMALS = CALLS_PER_TOKEN + 1
 
 function getFallbackClient() {
   return createPublicClient({
@@ -85,6 +94,7 @@ export function useTokenList() {
   const wagmiClient = usePublicClient()
   const [tokens, setTokens] = useState<TokenInfo[]>([])
   const [loading, setLoading] = useState(true)
+  const [refreshing, setRefreshing] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const latestTokensRef = useRef<TokenInfo[]>([])
   const inFlightRef = useRef<Promise<void> | null>(null)
@@ -133,14 +143,17 @@ export function useTokenList() {
     return results
   }, [getClient])
 
-  /** Batch semua data token lewat Multicall3 (10 call per token → 1 request). */
+  /** Batch semua data token lewat Multicall3 (≥10 call per token → 1 request). */
   const enrichTokens = useCallback(
     async (rawTokens: RawToken[]): Promise<TokenInfo[]> => {
       if (rawTokens.length === 0) return []
       const client = getClient()
 
       const calls: Multicall3Call[] = []
+      /** Offset call pertama tiap token di dalam batch (call pair bersifat opsional). */
+      const offsets: number[] = []
       for (const t of rawTokens) {
+        offsets.push(calls.length)
         calls.push(mcall(t.token, encodeFunctionData({ abi: launcherTokenAbi, functionName: 'name' })))
         calls.push(mcall(t.token, encodeFunctionData({ abi: launcherTokenAbi, functionName: 'symbol' })))
         calls.push(mcall(t.token, encodeFunctionData({ abi: launcherTokenAbi, functionName: 'logo' })))
@@ -156,6 +169,11 @@ export function useTokenList() {
             encodeFunctionData({ abi: launchFactoryAbi, functionName: 'getLaunchedToken', args: [t.token] })
           )
         )
+        // Pair non-ETH: baca simbol & desimalnya supaya harga bisa ditampilkan dengan benar.
+        if (t.pairToken !== ZERO_ADDRESS) {
+          calls.push(mcall(t.pairToken, encodeFunctionData({ abi: launcherTokenAbi, functionName: 'symbol' })))
+          calls.push(mcall(t.pairToken, encodeFunctionData({ abi: launcherTokenAbi, functionName: 'decimals' })))
+        }
       }
 
       const multicallResult = await client.readContract({
@@ -169,7 +187,7 @@ export function useTokenList() {
 
       for (let i = 0; i < rawTokens.length; i++) {
         const t = rawTokens[i]
-        const base = i * CALLS_PER_TOKEN
+        const base = offsets[i]
 
         /** Data hasil call ke-i; lempar error bila call gagal / data kosong. */
         const dataAt = (index: number): `0x${string}` => {
@@ -255,12 +273,36 @@ export function useTokenList() {
           null
         )
 
+        const isEthPaired = t.pairToken === ZERO_ADDRESS
+        const pairSymbol = isEthPaired
+          ? 'ETH'
+          : safe(
+              () =>
+                decodeFunctionResult({
+                  abi: launcherTokenAbi,
+                  functionName: 'symbol',
+                    data: dataAt(PAIR_SYMBOL),
+                }),
+              `${t.pairToken.slice(0, 6)}…${t.pairToken.slice(-4)}`
+            )
+        const pairDecimals = isEthPaired
+          ? 18
+          : safe(
+              () =>
+                decodeFunctionResult({
+                  abi: launcherTokenAbi,
+                  functionName: 'decimals',
+                    data: dataAt(PAIR_DECIMALS),
+                }),
+              18
+            )
+
         enriched.push({
           address: t.token,
           curveAddress: t.curve,
           deployer: t.deployer,
           pairToken: t.pairToken,
-          launchConfigId: launched?.launchConfigId ?? t.launchConfigId,
+          launchConfigId: t.launchConfigId,
           launchBlock: t.launchBlock,
           name,
           symbol,
@@ -273,7 +315,9 @@ export function useTokenList() {
           feeBps,
           creatorTaxBps,
           phase: launched?.phase ?? 0,
-          isEthPaired: t.pairToken === '0x0000000000000000000000000000000000000000',
+          isEthPaired,
+          pairSymbol,
+          pairDecimals,
         })
       }
 
@@ -285,18 +329,18 @@ export function useTokenList() {
 
   /**
    * Muat ulang daftar token.
-   * `mode: 'initial'` tidak memanggil setState secara sinkron di dalam effect
-   * (menghindari cascading render) — lihat react/set-state-in-effect.
+   * - `initial`   : load pertama (skeleton tampil, list masih kosong).
+   * - `manual`    : user menekan tombol Refresh (spinner di tombol, list tidak dikosongkan).
+   * - `background`: polling tiap 30 detik (senyap — daftar tidak pernah diganti skeleton).
    */
   const load = useCallback(
-    (mode: 'initial' | 'refresh' = 'refresh'): Promise<void> => {
+    (mode: 'initial' | 'manual' | 'background' = 'manual'): Promise<void> => {
       if (inFlightRef.current) return inFlightRef.current
 
       const run = (async () => {
-        if (mode === 'refresh') {
-          setLoading(true)
-          setError(null)
-        }
+        const hasData = latestTokensRef.current.length > 0
+        if (!hasData) setLoading(true)
+        if (mode === 'manual') setRefreshing(true)
         try {
           const rawTokens = await fetchTokenAddresses()
           const enriched = await enrichTokens(rawTokens)
@@ -310,6 +354,7 @@ export function useTokenList() {
           }
         } finally {
           setLoading(false)
+          setRefreshing(false)
         }
       })()
 
@@ -392,14 +437,14 @@ export function useTokenList() {
     [getClient]
   )
 
-  // Load awal + polling token baru tiap 30 detik.
+  // Load awal + polling token baru tiap 30 detik (tanpa mengosongkan daftar).
   useEffect(() => {
     void load('initial')
     const interval = setInterval(() => {
-      void load('refresh')
+      void load('background')
     }, 30000)
     return () => clearInterval(interval)
   }, [load])
 
-  return { tokens, loading, error, reload: () => load('refresh'), refreshToken }
+  return { tokens, loading, refreshing, error, reload: () => load('manual'), refreshToken }
 }

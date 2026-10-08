@@ -1,8 +1,9 @@
 import { useState } from 'react'
-import { useAccount, useChainId, usePublicClient, useWalletClient } from 'wagmi'
+import { useAccount, usePublicClient, useWalletClient } from 'wagmi'
 import type { TokenInfo } from '../hooks/useTokenList'
 import { isUserRejected, parseContractError } from '../lib/utils'
-import { LAUNCH_FACTORY_ADDRESS, robinhoodTestnet } from '../lib/wagmi'
+import { useWalletNetwork } from '../hooks/useWalletNetwork'
+import { LAUNCH_FACTORY_ADDRESS } from '../lib/wagmi'
 import launchFactoryAbi from '../abi/LaunchFactory'
 import TxStatusView, { type TxStatus } from './TxStatusView'
 
@@ -18,7 +19,7 @@ interface GraduateButtonProps {
  */
 export default function GraduateButton({ token, onSuccess }: GraduateButtonProps) {
   const { isConnected } = useAccount()
-  const chainId = useChainId()
+  const { isWrongNetwork } = useWalletNetwork()
   const publicClient = usePublicClient()
   const { data: walletClient } = useWalletClient()
   const [txStatus, setTxStatus] = useState<TxStatus>({ type: 'idle' })
@@ -26,9 +27,11 @@ export default function GraduateButton({ token, onSuccess }: GraduateButtonProps
   // Hanya tampil di phase 1 — tetap tampilkan pesan sukses sampai ditutup.
   if (token.phase !== 1 && txStatus.type !== 'success') return null
 
-  const isWrongNetwork = isConnected && chainId !== robinhoodTestnet.id
-  const isIdle = txStatus.type === 'idle'
-  const canGraduate = isConnected && !isWrongNetwork && isIdle && !!walletClient && !!publicClient
+  /** Terkunci saat transaksi berjalan / menampilkan hasil sukses. */
+  const isLocked =
+    txStatus.type === 'signing' || txStatus.type === 'pending' || txStatus.type === 'success'
+  const isUsable = txStatus.type === 'idle' || txStatus.type === 'error'
+  const canGraduate = isConnected && !isWrongNetwork && !isLocked && !!walletClient && !!publicClient
 
   const disableReason = !isConnected
     ? 'Connect wallet dulu untuk graduate'
@@ -48,7 +51,14 @@ export default function GraduateButton({ token, onSuccess }: GraduateButtonProps
         args: [token.address],
       })
       setTxStatus({ type: 'pending', hash })
-      await publicClient.waitForTransactionReceipt({ hash })
+      const receipt = await publicClient.waitForTransactionReceipt({ hash })
+      if (receipt.status === 'reverted') {
+        setTxStatus({
+          type: 'error',
+          message: 'Graduation gagal di jaringan (reverted). Token mungkin sudah graduate atau belum siap.',
+        })
+        return
+      }
       setTxStatus({ type: 'success', hash })
       onSuccess()
     } catch (e) {
@@ -74,11 +84,11 @@ export default function GraduateButton({ token, onSuccess }: GraduateButtonProps
         pendingLabel="Menunggu konfirmasi graduation…"
         successTitle="Graduation berhasil!"
         successDetail={<div>Pool untuk {token.symbol} berhasil dibuat.</div>}
-        onReset={isIdle ? undefined : () => setTxStatus({ type: 'idle' })}
+        onReset={txStatus.type === 'success' ? () => setTxStatus({ type: 'idle' }) : undefined}
         resetLabel="Tutup"
       />
 
-      {(txStatus.type === 'idle' || txStatus.type === 'signing') && (
+      {(isUsable || txStatus.type === 'signing') && (
         <button
           id="btn-graduate"
           className="btn btn-primary btn-graduate"
@@ -95,7 +105,7 @@ export default function GraduateButton({ token, onSuccess }: GraduateButtonProps
           )}
         </button>
       )}
-      {disableReason && isIdle && <p className="disable-hint">{disableReason}</p>}
+      {disableReason && isUsable && <p className="disable-hint">{disableReason}</p>}
     </div>
   )
 }

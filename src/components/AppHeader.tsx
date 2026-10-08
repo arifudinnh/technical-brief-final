@@ -1,8 +1,9 @@
-import { useAccount, useChainId, useReadContract } from 'wagmi'
+import { useReadContract } from 'wagmi'
 import { formatEther } from 'viem'
 import WalletButton from './WalletButton'
 import LaunchToken from './LaunchToken'
-import { LAUNCH_FACTORY_ADDRESS, robinhoodTestnet } from '../lib/wagmi'
+import { LAUNCH_FACTORY_ADDRESS } from '../lib/wagmi'
+import { useWalletNetwork } from '../hooks/useWalletNetwork'
 import launchFactoryAbi from '../abi/LaunchFactory'
 
 interface AppHeaderProps {
@@ -11,8 +12,7 @@ interface AppHeaderProps {
 }
 
 export default function AppHeader({ onReload }: AppHeaderProps) {
-  const { isConnected } = useAccount()
-  const chainId = useChainId()
+  const { isWrongNetwork } = useWalletNetwork()
 
   // Baca launchFee untuk verifikasi koneksi RPC (langkah 1 brief).
   const { data: launchFee } = useReadContract({
@@ -20,8 +20,6 @@ export default function AppHeader({ onReload }: AppHeaderProps) {
     abi: launchFactoryAbi,
     functionName: 'launchFee',
   })
-
-  const isWrongNetwork = isConnected && chainId !== robinhoodTestnet.id
 
   return (
     <>

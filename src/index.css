@@ -181,9 +181,13 @@ a:hover {
   min-width: 0;
 }
 
-@media (max-width: 768px) {
+/* Badge launch fee di header disembunyikan di layar sempit;
+   salinannya tampil di footer (.footer__fee) supaya tetap terlihat. */
+@media (max-width: 640px) {
   .header__center { display: none; }
 }
+
+.footer__fee { display: none; }
 
 .header__actions {
   display: flex;
@@ -324,7 +328,8 @@ a:hover {
 }
 
 .phase-filter-btn {
-  padding: 6px 16px;
+  padding: 8px 16px;
+  min-height: 36px;
   border-radius: var(--radius-full);
   border: 1px solid var(--border-default);
   background: var(--bg-surface);
@@ -366,6 +371,8 @@ a:hover {
   display: flex;
   flex-direction: column;
   gap: 20px;
+  /* Container query: kartu sempit (grid auto-fill) bisa memecah baris footer. */
+  container-type: inline-size;
 }
 
 .token-card:hover {
@@ -424,12 +431,16 @@ a:hover {
   align-items: center;
   justify-content: space-between;
   width: 100%;
+  /* Di kartu sempit, badge fase turun ke baris kedua alih-alih overflow. */
+  flex-wrap: wrap;
+  row-gap: 4px;
 }
 
 .token-name {
   font-weight: 600;
   font-size: 1.0625rem;
   color: var(--text-primary);
+  min-width: 0;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -450,6 +461,8 @@ a:hover {
   flex-shrink: 0;
 }
 
+.token-name-row .phase-badge { flex-shrink: 0; }
+
 .token-card__footer {
   display: flex;
   align-items: center;
@@ -468,6 +481,17 @@ a:hover {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* Kartu sempit: tombol + supply tidak muat dalam satu baris,
+   jadi supply turun ke baris sendiri (tanpa terpotong). */
+@container (max-width: 359px) {
+  .token-card__footer { flex-wrap: wrap; }
+  .token-card__supply {
+    flex: 1 1 100%;
+    order: 3;
+    text-align: left;
+  }
 }
 
 .token-card__progress {
@@ -779,6 +803,7 @@ a:hover {
   display: flex;
   gap: 8px;
   align-items: center;
+  flex-wrap: wrap;
 }
 
 .slippage-btn {
@@ -859,6 +884,10 @@ a:hover {
   cursor: not-allowed;
 }
 
+/* Teks panjang/pendek untuk header (desktop memakai label-lg,
+   layar sempit memakai label-sm agar tidak overflow). */
+.label-sm { display: none; }
+
 .btn-primary {
   background: var(--accent-primary);
   color: var(--bg-base);
@@ -937,11 +966,66 @@ a:hover {
 .overlay {
   position: fixed;
   inset: 0;
+  /* Header punya backdrop-filter → menjadi containing block elemen fixed di
+     dalamnya, jadi ukuran harus pakai satuan viewport agar menutupi seluruh layar. */
+  width: 100vw;
+  height: 100dvh;
   z-index: 190;
   background: transparent;
 }
 
 .wallet-info { position: relative; }
+
+/* Status connect: tombol connect dibungkus wrapper relatif supaya chip pesan
+   (wallet tidak terdeteksi / connect gagal) muncul tepat di bawah tombol —
+   sebelumnya kegagalan connect tidak dirender apa pun sehingga tombol terasa
+   "tidak bisa diklik". */
+.wallet-connect {
+  position: relative;
+  display: inline-flex;
+}
+
+.connect-error {
+  position: absolute;
+  top: calc(100% + 10px);
+  right: 0;
+  z-index: 210;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  width: max-content;
+  max-width: min(320px, calc(100vw - 32px));
+  padding: 10px 12px;
+  background: var(--bg-card);
+  border: 1px solid var(--status-danger);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-xl);
+  color: var(--text-primary);
+  font-size: 0.75rem;
+  line-height: 1.45;
+  text-align: left;
+  white-space: normal;
+}
+
+.connect-error::before {
+  content: '⚠️';
+  line-height: 1.3;
+}
+
+.connect-error__close {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 0.75rem;
+  line-height: 1;
+  padding: 2px;
+  flex-shrink: 0;
+}
+
+.connect-error__close:hover {
+  color: var(--text-primary);
+}
 
 .wallet-dot {
   width: 6px;
@@ -1551,6 +1635,8 @@ a:hover {
   border: 1px solid var(--border-default);
   border-radius: var(--radius-xl);
   padding: 24px;
+  /* Grid item default min-width:auto → bisa memaksa overflow di layar sempit. */
+  min-width: 0;
 }
 
 /* Statistik detail */
@@ -1580,12 +1666,11 @@ a:hover {
 
 .stat-card__value {
   font-family: var(--font-mono);
-  font-size: 1.0625rem;
+  font-size: 0.9375rem;
   font-weight: 600;
   color: var(--text-primary);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
+  line-height: 1.3;
 }
 
 .stat-card__sub {
@@ -1758,18 +1843,35 @@ a:hover {
     border-bottom: none;
     border-left: none;
     border-right: none;
+    box-shadow: 0 -24px 48px rgba(0, 0, 0, 0.75);
+    padding-bottom: calc(32px + env(safe-area-inset-bottom, 0px));
   }
+  /* Konten terakhir tidak tertutup bottom sheet saat panel terbuka. */
+  .main:has(.buy-panel) { padding-bottom: 96px; }
 }
 
 @media (max-width: 640px) {
-  .header__inner { padding: 0 16px; }
+  /* Header: teks panjang diganti label singkat agar tidak overflow. */
+  .label-lg { display: none; }
+  .label-sm { display: inline; }
+  .header__inner { padding: 0 12px; gap: 8px; }
+  .header__logo { gap: 8px; }
+  .header__actions { gap: 8px; }
+  .logo-icon { font-size: 1.125rem; }
+  .logo-title { font-size: 1rem; }
+  .btn-connected { padding: 8px 12px; }
+  .btn-connected svg { display: none; }
+  .btn-sm { padding: 8px 12px; }
+  .header .btn-primary svg { display: none; }
   .logo-sub { display: none; }
   .wallet-balance { display: none; }
   .network-warning { display: none; }
+  .footer__fee { display: inline; color: var(--text-secondary); }
   .main { padding: 24px 16px; }
   .panel-header { flex-direction: column; align-items: stretch; }
+  .panel-controls { flex-wrap: wrap; }
+  .search-wrapper { flex: 1 1 180px; width: auto; min-width: 0; }
   .search-input { width: 100%; }
-  .search-wrapper { width: 100%; }
   .detail__hero {
     flex-direction: column;
     align-items: flex-start;
@@ -1778,5 +1880,16 @@ a:hover {
   .detail__title { font-size: 1.375rem; }
   .token-logo--lg { width: 56px; height: 56px; }
   .stats-grid { grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); }
+  /* Angka panjang (mis. sisa token) muat dalam satu baris di kartu sempit. */
+  .stat-card__value { font-size: 0.875rem; }
   .footer__inner { justify-content: center; text-align: center; }
+  .launch-modal-overlay { padding: 12px; }
+  .launch-modal { padding: 24px 20px; margin-top: 6vh; }
+}
+
+/* Sangat sempit (mis. 320px): tombol Launch jadi ikon saja. */
+@media (max-width: 360px) {
+  .header .btn-outline .label-sm { display: none; }
+  .logo-title { font-size: 0.9375rem; }
+  .main { padding: 20px 12px; }
 }

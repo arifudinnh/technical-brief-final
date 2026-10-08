@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import type { TokenInfo } from '../hooks/useTokenList'
-import { formatSmallPrice, calcProgressBps, phaseLabel, formatAmount, formatEth } from '../lib/utils'
+import { formatSmallPrice, calcProgressBps, phaseLabel, formatAmount, formatQuote } from '../lib/utils'
 
 interface TokenCardProps {
   token: TokenInfo
@@ -13,9 +13,10 @@ export default function TokenCard({ token, selected, onSelect, onOpenDetail }: T
   const [imgError, setImgError] = useState(false)
   const { label, color } = phaseLabel(token.phase)
 
-  // Harga = quoteReserve / tokenReserve (wei per token, semua bigint).
-  const priceWei = token.tokenReserve > 0n ? (token.quoteReserve * 10n ** 18n) / token.tokenReserve : 0n
-  const priceDisplay = priceWei > 0n ? `${formatSmallPrice(priceWei)} ETH` : '–'
+  // Harga = quoteReserve / tokenReserve (satuan quote per token, semua bigint).
+  const priceQuote = token.tokenReserve > 0n ? (token.quoteReserve * 10n ** 18n) / token.tokenReserve : 0n
+  const priceDisplay =
+    priceQuote > 0n ? `${formatSmallPrice(priceQuote, token.pairDecimals)} ${token.pairSymbol}` : '–'
 
   const progressBps = calcProgressBps(token.realQuoteReserve, token.graduationThreshold)
   const progressPct = (progressBps / 100).toFixed(1)
@@ -79,8 +80,12 @@ export default function TokenCard({ token, selected, onSelect, onOpenDetail }: T
           />
         </div>
         <div className="progress-detail">
-          <span>{formatEth(token.realQuoteReserve)} ETH terkumpul</span>
-          <span>{formatEth(token.graduationThreshold)} ETH target</span>
+          <span>
+            {formatQuote(token.realQuoteReserve, token.pairDecimals)} {token.pairSymbol} terkumpul
+          </span>
+          <span>
+            {formatQuote(token.graduationThreshold, token.pairDecimals)} {token.pairSymbol} target
+          </span>
         </div>
       </div>
 

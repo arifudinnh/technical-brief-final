@@ -28,7 +28,7 @@ const abi = [
       {
         "name": "",
         "type": "tuple",
-        "internalType": "struct LaunchedToken",
+        "internalType": "struct ILaunchFactory.LaunchedToken",
         "components": [
           {
             "name": "token",
@@ -46,14 +46,14 @@ const abi = [
             "internalType": "address"
           },
           {
-            "name": "pairToken",
+            "name": "creatorFeeRecipient",
             "type": "address",
             "internalType": "address"
           },
           {
-            "name": "launchConfigId",
-            "type": "uint256",
-            "internalType": "uint256"
+            "name": "pairToken",
+            "type": "address",
+            "internalType": "address"
           },
           {
             "name": "graduationThreshold",
@@ -61,9 +61,49 @@ const abi = [
             "internalType": "uint256"
           },
           {
+            "name": "poolFee",
+            "type": "uint24",
+            "internalType": "uint24"
+          },
+          {
+            "name": "tickSpacing",
+            "type": "int24",
+            "internalType": "int24"
+          },
+          {
+            "name": "creatorTaxBps",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "buybackEnabled",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
             "name": "phase",
             "type": "uint8",
-            "internalType": "uint8"
+            "internalType": "enum GraduationPhase"
+          },
+          {
+            "name": "sweptQuote",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "sweptTokens",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "sweptAt",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "exists",
+            "type": "bool",
+            "internalType": "bool"
           }
         ]
       }
@@ -236,7 +276,13 @@ const abi = [
         "internalType": "address"
       }
     ],
-    "outputs": [],
+    "outputs": [
+      {
+        "name": "positionId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
     "stateMutability": "nonpayable"
   },
   {
